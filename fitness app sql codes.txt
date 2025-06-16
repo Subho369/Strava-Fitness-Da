@@ -1,0 +1,352 @@
+
+
+
+1 dashboard 1st chart
+
+
+with all_info as
+(
+select d.days, 
+count(*) as per_day_active_users,
+sum(Total_Steps) as total_steps,
+Round(SUM(Total_Distance),2) as total_distances,
+sum(Calories) as total_calories
+from Dim_date as d 
+inner join Daily_Activities as a on a.activity_date = d.dates
+where Total_Steps>0
+group by d.days)
+,
+users_with_0_steps as
+(
+select d.days, 
+count(*) as users_0_steps_cnt
+from Dim_date as d 
+inner join Daily_Activities as a on a.activity_date = d.dates
+where Total_Steps=0
+group by d.days
+)
+
+select a.*,u0.users_0_steps_cnt
+from all_info as a
+inner join users_with_0_steps as u0 on a.days = u0.days
+order by 
+case 
+when a.days = 'mon' then 1 when a.days = 'Tue' then 2 when a.days = 'wed' then 3
+when a.days = 'thu' then 4 when a.days = 'fri' then 5 when a.days = 'sat' then 6
+else 7
+end ;
+
+-------------------------------------------
+
+
+--Q2 “Write a query to calculate the running total of Total_steps ordered by day (Monday to Sunday) and
+--also show the percentage contribution of each day to the weekly total.”
+
+
+with 
+total_steps_by_day as
+(
+select d.days,sum(Total_Steps) as total_step,
+case 
+when d.days = 'mon' then 1 when d.days = 'Tue' then 2 when d.days = 'wed' then 3
+when d.days = 'thu' then 4 when d.days = 'fri' then 5 when d.days = 'sat' then 6
+else 7 end as day_sort
+from Dim_date as d 
+inner join Daily_Activities as a on a.activity_date = d.dates
+group by d.days
+)
+select days,total_step,
+sum(total_step)over(order by day_sort) as running_total,
+round( 100.00*total_step/ sum(total_step)over(),2 ) as steps_pct
+from total_steps_by_day
+
+
+
+--Q3 correlation between steps and calories
+
+
+
+with cte1 as
+(
+select dates, 
+Total_Steps, avg(Total_Steps*1.0)over() as all_avg_steps,
+Calories, avg(Calories*1.0)over() as all_avg_calories
+from Dim_date as d
+inner join Daily_Activities as a on a.activity_date = d.dates
+where Total_Steps>0
+),
+cte2 as
+(
+select *,
+(Total_Steps-all_avg_steps) as x,
+(Calories-all_avg_calories) as y,
+power(Total_Steps-all_avg_steps,2) as x2,
+POWER(Calories-all_avg_calories,2) as y2
+from cte1
+)
+
+SELECT 
+    ROUND(SUM(x * y) / SQRT(SUM(x2) * SUM(y2)), 4) AS correlation_steps_vs_calories
+FROM cte2;
+
+--output is 0.562 it means moderately positive correlation,
+--It shows a consistent upward trend, though some variance still exists 
+--(e.g., not every high-step day burns proportionally higher calories — maybe due to intensity
+--differences, walking vs running, etc.).
+
+-----------------------------------------------
+--Q4 “Write a query to return only those days where the Total_distance_km was greater than the weekly average
+--and the number of Active_users was less than 138.”
+
+
+with cte1 as
+(
+select FORMAT(activity_date,'ddd') as day_name,
+count(*) as active_users,
+sum(Total_Distance) as total_distance_km
+from Daily_Activities
+where Total_Steps>0
+group  by FORMAT(activity_date,'ddd')
+),
+cte2 as
+(
+select *, AVG(total_distance_km)over() as all_avg_distance
+from cte1 
+)
+select * 
+from cte2
+where total_distance_km>all_avg_distance and active_users<=138
+
+
+--Q5 calculate for each day the average distance per active user, 
+--  and then return the top 3 days where users were most efficient (in terms of distance per user).”
+
+select top 3 FORMAT(activity_date,'ddd'),count(*)as active_users,
+round(AVG(Total_Distance),2) AS Avg_distance
+from Daily_Activities
+where Total_Distance>0
+group  by activity_date
+order by Avg_distance desc;
+
+
+--Q6 “Add a column to classify each day as ‘High Burn’, ‘Medium Burn’, or ‘Low Burn’ based on the total calories burned per day:
+--High Burn: > 70,000
+--Medium Burn: 50,000 – 70,000
+--Low Burn: < 50,000”
+
+
+with cte1 as(
+select activity_date, sum(Calories) as calories_burn
+from Daily_Activities 
+group by activity_date
+--order by calories_burn
+)
+select *,
+case 
+when calories_burn<50000 then 'Low_burn'
+when calories_burn between 50000 and 70000 then 'Medium_burn'
+else 'High_burn' end as calories_burn_type
+from cte1
+order by calories_burn;
+
+
+
+
+--Q7 write a query to calculate the 3-day moving average of Total_steps 
+--and compare it with the actual value on the 4th day.
+
+
+with cte1 as
+(
+select activity_date, sum(Total_Steps) as total_step
+from Daily_Activities
+group by activity_date
+),
+cte2 as(
+select *,
+AVG(total_step)
+over(order by activity_date rows between 3 preceding and 1 preceding) as moving_avg_3day,
+row_number()over(order by activity_date) as index_no
+from cte1
+)
+select * 
+from cte2
+ WHERE  index_no = 4;
+
+
+
+--Q8 calculate the percentage contribution between light_active_distance,very_active_distance,moderately_active_distance
+
+with cte1 as
+(
+select 
+round(sum(Light_Active_Distance),2) as data_value, 1 as index_no from Daily_Activities
+union all
+select sum(Very_Active_Distance) as active_distance_km,2 from Daily_Activities
+union all
+select 
+sum(Moderately_Active_Distance),3 as modertely_distance_km
+from Daily_Activities
+),
+cte2 as(
+select 
+case 
+when index_no = 1 then 'light_distance_km'
+when index_no = 2 then 'active_distance_km'
+else 'modertely_distance_km' end as Distance_type,
+data_value,
+SUM(data_value)over() as all_total_distance
+from cte1
+)
+select  Distance_type, data_value,
+round((100.0*data_value/all_total_distance),2 ) as pct_contribution
+from cte2
+
+
+
+--Q9 create a calculated column called user_activity_category based on 
+--Very_Active_Minutes > 60 then 'Highly_active',
+--Sedentary_Minutes = 1440 then 'Not_active',
+--Sedentary_Minutes> total_active_min then 'Low_active', else 'Moderately_active'
+
+
+
+with cte1 as
+(
+select 
+case 
+when Very_Active_Minutes > 60 then 'Highly_active' 
+when Sedentary_Minutes = 1440 then 'Not_active'
+when Sedentary_Minutes> Fairly_Active_Minutes+Lightly_Active_Minutes+Very_Active_Minutes
+then 'Low_active' 
+else 'Moderately_active' end as user_activity_category
+from Daily_Activities
+)
+select user_activity_category,count(*) as cnt,
+round(100*count(*)/ sum(count(*))over() ,2) pct_contribution
+from cte1 
+group by user_activity_category
+
+
+
+
+--Q10 calculate the total_rows based on the day_name and user_activity_category
+
+
+with cte1 as
+(
+select activity_date,
+case 
+when Very_Active_Minutes > 60 then 'Highly_active' 
+when Sedentary_Minutes = 1440 then 'Not_active'
+when Sedentary_Minutes> Fairly_Active_Minutes+Lightly_Active_Minutes+Very_Active_Minutes
+then 'Low_active' 
+else 'Moderately_active' end as user_activity_category
+from Daily_Activities
+)
+select FORMAT(activity_date ,'ddd')as days ,user_activity_category, count(*)
+from cte1
+group by FORMAT(activity_date ,'ddd'),user_activity_category;
+
+
+
+
+
+
+
+---------------------------------------
+
+Table creation code 
+
+
+dimenional_table.
+
+
+create table Dim_date
+(
+dates date primary key,
+days varchar(5),
+day_type varchar(10)
+)
+
+
+create table Dim_time 
+(
+Times time primary key,
+Hours int 
+)
+
+create table Dim_users 
+(
+id varchar(20) primary key
+)
+
+
+-----------------------
+factt_tables
+
+
+CREATE TABLE Daily_Activities (
+    Id varchar(20),
+    activity_date DATE,
+    Total_Steps INT,
+    Total_Distance FLOAT,
+    Tracker_Distance FLOAT,
+    Logged_Activities_Distance FLOAT,
+    Very_Active_Distance FLOAT,
+    Moderately_Active_Distance FLOAT,
+    Light_Active_Distance FLOAT,
+    Sedentary_Active_Distance FLOAT,
+    Very_Active_Minutes INT,
+    Fairly_Active_Minutes INT,
+    Lightly_Active_Minutes INT,
+    Sedentary_Minutes INT,
+    Calories INT
+
+   constraint fk_fact_users foreign key (id) references Dim_users(id),
+   constraint fk_fact_dates foreign key (activity_date) references dim_date(dates),
+   
+);
+
+
+create table Hourly_calories
+(
+id varchar(20),
+dates date,
+times time,
+calories int
+
+constraint fk_user_id foreign key(id) references dim_users(id),
+constraint fk_dates foreign key(dates) references dim_date(dates),
+constraint fk_time foreign key(times) references dim_time(times)
+)
+
+
+
+create table Hourly_steps
+(
+id varchar(20),
+dates date,
+times time,
+steps int
+
+constraint fk_user_id_hrs_steps foreign key(id) references dim_users(id),
+constraint fk_dates_hrs_steps foreign key(dates) references dim_date(dates),
+constraint fk_time_hrs_steps foreign key(times) references dim_time(times)
+)
+
+
+
+create table heart_rate
+(
+id varchar(20),
+dates date,
+hours int,
+hr_value int
+
+constraint fk_heart_rate_id foreign key(id) references dim_users(id),
+constraint fk_heart_rate_dates foreign key(dates) references dim_date(dates)
+)
+
+
+
